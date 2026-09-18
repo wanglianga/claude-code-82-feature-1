@@ -12,6 +12,7 @@ import {
 import { SessionPicker, LifecycleSteps, PoolStatusBanner, Stat } from '../components/common.js';
 import { IncidentList, IncidentCreateForm } from '../components/incident.js';
 import { RescueCard, TrainingRow, rescueStatus, zoneLabel } from '../components/cramp.js';
+import { RentalOpsTab } from '../components/rental.js';
 import {
   CRAMP_PART_LABEL, RESCUE_METHOD_LABEL, RESCUE_CLOSURE_LABEL,
 } from '../../shared/types.js';
@@ -219,97 +220,6 @@ function Command({ state }: Props) {
     </div>
   );
 }
-
-// ============ 商业 / 公益冲突 ============
-function Conflicts({ state }: Props) {
-  const act = useAction();
-  const notify = useNotify();
-  const [sessionId, setSessionId] = useState(state.sessions[1].id);
-  const [zoneId, setZoneId] = useState<ZoneId>('family');
-  const [lane, setLane] = useState<number | undefined>(undefined);
-  const [title, setTitle] = useState('蓝鲸游泳培训·暑期少儿包场');
-  const [contact, setContact] = useState('赵晓');
-  const [phone, setPhone] = useState('13800000005');
-  const [capacity, setCapacity] = useState(30);
-  const [commercial, setCommercial] = useState(true);
-  const [lastConflicts, setLastConflicts] = useState<string[] | null>(null);
-
-  const session = state.sessions.find((s) => s.id === sessionId)!;
-  const myConflicts = state.conflicts.filter((c) => c.sessionId === sessionId);
-
-  const submit = () =>
-    act.mutateAsync({
-      path: '/locks',
-      body: { sessionId, zoneId, lane, reason: commercial ? 'institution_rental' : 'coaching' as LockReason, title, contactName: contact, contactPhone: phone, capacity, isCommercial: commercial },
-    }).then((r: any) => {
-      setLastConflicts(r.conflicts);
-      notify.ok(r.conflicts.length ? '锁区已登记，存在冲突已标红预警' : '锁区已登记，无冲突');
-    }).catch((e) => notify.err(e));
-
-  return (
-    <div className="grid cols-2">
-      <Card title="⚖️ 商业预约 vs 居民公益时段冲突看板">
-        {state.conflicts.length === 0 ? <Empty text="当前无商业/公益冲突" /> : state.conflicts.map((c, i) => (
-          <div key={i} className="notif critical">
-            <div className="flex"><b>{c.sessionLabel}</b><span className="spacer" /><Badge tone="danger">冲突</Badge></div>
-            <div className="small" style={{ marginTop: 4 }}>{c.message}</div>
-          </div>
-        ))}
-        <h4>按场次查看锁定</h4>
-        <SessionPicker sessions={state.sessions} value={sessionId} onChange={setSessionId} />
-        {session.publicWelfare && <div className="alert warn">本场为居民公益时段（老人晨泳），登记商业包场将触发强冲突预警。</div>}
-        {myConflicts.length === 0 && <div className="alert ok">本场暂无新的冲突。</div>}
-        {session.locks.map((l) => (
-          <div key={l.id} className="queue-row">
-            <div><b>{l.title}</b>
-              <div className="small muted">{state.zones.find((z) => z.id === l.zoneId)?.name}{l.lane ? ` ${l.lane}号道` : '整区'} · {l.capacity} 人 · {l.contactName}</div></div>
-            <div className="flex">
-              <Badge tone={l.isCommercial ? 'danger' : 'purple'}>{l.isCommercial ? '商业' : '教学'}</Badge>
-              <button className="btn sm ghost danger" disabled={act.isPending}
-                onClick={() => { if (confirm('解除该锁区？关联的待入场预约将被取消。')) act.mutateAsync({ path: `/locks/${l.id}`, method: 'DELETE' }).then(() => notify.ok('锁区已解除，名额释放给居民')).catch((e) => notify.err(e)); }}>
-                解除
-              </button>
-            </div>
-          </div>
-        ))}
-      </Card>
-
-      <Card title="登记商业包场 / 教学锁区">
-        <div className="form-row">
-          <label className="field">场次<select value={sessionId} onChange={(e) => setSessionId(e.target.value)}>{state.sessions.map((s) => <option key={s.id} value={s.id}>{s.label}{s.publicWelfare ? '（公益）' : ''}</option>)}</select></label>
-          <label className="field">泳区<select value={zoneId} onChange={(e) => setZoneId(e.target.value as ZoneId)}>{state.zones.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}</select></label>
-        </div>
-        <div style={{ height: 10 }} />
-        <div className="form-row">
-          <label className="field">泳道（可空=整区）
-            <select value={lane ?? ''} onChange={(e) => setLane(e.target.value ? Number(e.target.value) : undefined)}>
-              <option value="">整区锁定</option>{[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n} 号道</option>)}
-            </select>
-          </label>
-          <label className="field">占用名额<input type="number" value={capacity} onChange={(e) => setCapacity(Number(e.target.value))} /></label>
-        </div>
-        <div style={{ height: 10 }} />
-        <label className="field">事项标题<input value={title} onChange={(e) => setTitle(e.target.value)} /></label>
-        <div style={{ height: 10 }} />
-        <div className="form-row">
-          <label className="field">联系人<input value={contact} onChange={(e) => setContact(e.target.value)} /></label>
-          <label className="field">电话<input value={phone} onChange={(e) => setPhone(e.target.value)} /></label>
-        </div>
-        <div style={{ height: 10 }} />
-        <label className="checkbox"><input type="checkbox" checked={commercial} onChange={(e) => setCommercial(e.target.checked)} /> 商业性质（培训机构包场；不勾选则为内部教学道）</label>
-        <div style={{ height: 12 }} />
-        <button className="btn" disabled={act.isPending} onClick={submit}>登记并做冲突检测</button>
-        {lastConflicts && (
-          <div className={`alert ${lastConflicts.length ? 'danger' : 'ok'}`} style={{ marginTop: 12 }}>
-            {lastConflicts.length ? <>检测到 {lastConflicts.length} 项冲突：{lastConflicts.map((m, i) => <div key={i}>· {m}</div>)}</> : '与居民公益时段及现有预约无冲突。'}
-          </div>
-        )}
-        <div className="small muted" style={{ marginTop: 8 }}>系统同时覆盖：外来访客散客票、老人晨泳公益场、暑期儿童高峰晚场（容量预警）、机构对公包场，冲突在此一屏协调。</div>
-      </Card>
-    </div>
-  );
-}
-
 // ============ 闭池 / 恢复 ============
 const CAUSES: { v: IncidentType | 'other'; label: string }[] = [
   { v: 'water_abnormal', label: '水质异常' }, { v: 'thunderstorm', label: '雷雨临近' },
@@ -796,7 +706,7 @@ function Complaints({ state }: Props) {
 
 export function OpsPage(props: Props) {
   if (props.tab === 'rescue') return <RescueReviewTab {...props} />;
-  if (props.tab === 'conflict') return <Conflicts {...props} />;
+  if (props.tab === 'conflict') return <RentalOpsTab user={props.user} state={props.state} />;
   if (props.tab === 'close') return <CloseReopen {...props} />;
   if (props.tab === 'incident') return <IncidentTab {...props} />;
   if (props.tab === 'tasks') return <Dispatch {...props} />;

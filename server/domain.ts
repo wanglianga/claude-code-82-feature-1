@@ -297,7 +297,6 @@ export function createBooking(db: DB, userId: string, req: {
       capacity: partySize, isCommercial: true, bookingId: booking.id,
     };
     session.locks.push(lock);
-    session.locks.push(lock);
     const rawConflicts = lockConflicts(db, session, lock);
     // 机构账号本身是居民角色：可获知冲突与挤压人数，但不回显其他居民预约码
     conflictWarnings = user.role === 'resident'
@@ -1097,6 +1096,21 @@ export function conflictSummary(db: DB) {
       for (const message of lockConflicts(db, s, l)) {
         out.push({ sessionId: s.id, sessionLabel: s.label, message: `【${l.title}】${message}` });
       }
+    }
+  }
+  // 机构包场协调中的冲突（未完成/未驳回），运营与前台需在全局冲突看板跟进
+  for (const r of db.rentals) {
+    if (['completed', 'rejected', 'cancelled'].includes(r.status)) continue;
+    const inst = db.institutions.find((i) => i.id === r.institutionId);
+    const instLabel = inst?.name ?? '机构';
+    const session = db.sessions.find((s) => s.id === r.sessionId);
+    if (!session) continue;
+    const unresolved = r.residentConflicts.filter((c) => !c.resolution).length;
+    for (const m of r.conflictPreview.conflicts.slice(0, 3)) {
+      out.push({ sessionId: session.id, sessionLabel: session.label, message: `【${r.code}·${instLabel}包场】${m}` });
+    }
+    if (unresolved > 0) {
+      out.push({ sessionId: session.id, sessionLabel: session.label, message: `【${r.code}·${instLabel}包场】尚有 ${unresolved} 笔居民预约待协调（不得覆盖），状态：${r.status}` });
     }
   }
   return out;

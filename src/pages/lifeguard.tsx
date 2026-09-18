@@ -10,6 +10,7 @@ import {
 import { SessionPicker, PoolStatusBanner } from '../components/common.js';
 import { IncidentList, IncidentCreateForm } from '../components/incident.js';
 import { RescueWorkbench, FocusLaneAlerts, zoneLabel } from '../components/cramp.js';
+import { RentalDayBoard } from '../components/rental.js';
 import { WATER_STD } from '../../shared/logic.js';
 
 type Props = { user: User; state: AppState; tab: string; sessionId?: string };
@@ -302,5 +303,10 @@ export function LifeguardPage(props: Props) {
       <Card title="事件协同（同场次五角色共用）"><IncidentList incidents={props.state.incidents} user={props.user} /></Card>
     </div>
   );
-  return <Board state={props.state} sessionId={sessionId} setSessionId={setSessionId} />;
+  return (
+    <div className="grid">
+      <RentalDayBoard user={props.user} state={props.state} />
+      <Board state={props.state} sessionId={sessionId} setSessionId={setSessionId} />
+    </div>
+  );
 }

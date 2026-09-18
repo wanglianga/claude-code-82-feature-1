@@ -1,9 +1,10 @@
 import type {
   DB, User, Role, Session, Booking, Notification, Incident, WorkTask, PatrolIssue,
   WaterReading, GuardDuty, Complaint, CoachingLesson, LiveBoard, ZoneLock,
-  StateView, PatronCard,
+  StateView, PatronCard, InstitutionRental,
 } from '../shared/types.js';
 import { liveBoard, conflictSummary, sessionDetail } from './domain.js';
+import { sanitizeRental } from './rental.js';
 
 export type { StateView, PatronCard };
 
@@ -214,11 +215,33 @@ export function buildStateView(db: DB, viewer: User): StateView {
       ? db.guardTraining.filter((t) => t.targetGuardNames.length === 0 || t.targetGuardNames.includes(viewer.name))
       : [];
 
+  // ---- 机构包场协调：运营/前台全量；救生/保洁/维修见当天本岗协同（脱敏）；居民仅见与本人相关包场 ----
+  let rentals: InstitutionRental[] = [];
+  if (isOps || isFrontdesk) {
+    rentals = db.rentals;
+  } else if (isResident) {
+    rentals = db.rentals.filter((r) =>
+      r.residentConflicts.some((c) => c.userId === viewer.id) || r.applicantUserId === viewer.id);
+  } else {
+    // 救生/保洁/维修：仅当天进行中/待清场等需要现场协同的包场
+    rentals = db.rentals.filter((r) => ['approved', 'active', 'suspended', 'ended'].includes(r.status));
+  }
+  rentals = rentals.flatMap((r) => {
+    const v = sanitizeRental(r, viewer);
+    return v ? [v] : [];
+  });
+
+  // ---- 机构档案/账单：仅运营（前台可见账单用于当天费用核对，但不见信用处置外字段这里仍给运营全量） ----
+  const institutions = isOps ? db.institutions : [];
+  const institutionBills = isOps ? db.institutionBills : [];
+  const facilities = db.facilities ?? { showerCapacity: 60, lockerCount: 220 };
+
   return {
     viewerRole: role,
     users, zones: db.zones, sessions, bookings, waterReadings, equipment,
     guardDuties, patrolIssues, incidents, workTasks, complaints, notifications,
-    walletTxns, lessons, closureRecords, crampRescues, guardTraining, boards, conflicts,
+    walletTxns, lessons, closureRecords, crampRescues, guardTraining,
+    rentals, institutions, institutionBills, facilities, boards, conflicts,
   };
 }
 

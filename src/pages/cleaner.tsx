@@ -4,6 +4,7 @@ import type { AppState } from '../api.js';
 import { useAction } from '../api.js';
 import { Badge, Card, Empty, TASK_STATUS_LABEL, ISSUE_TYPE_LABEL, fmtDateTime, useNotify } from '../ui.js';
 import { IncidentList, IncidentCreateForm } from '../components/incident.js';
+import { RentalDayBoard } from '../components/rental.js';
 
 type Props = { user: User; state: AppState; tab: string };
 
@@ -21,7 +22,9 @@ function TaskBoard({ user, state, role }: Props & { role: 'cleaner' | 'maintenan
     act.mutateAsync({ path, body }).then(() => notify.ok('状态已同步到运营指挥台')).catch((e) => notify.err(e));
 
   return (
-    <div className="grid cols-2">
+    <div className="grid">
+      <RentalDayBoard user={user} state={state} />
+      <div className="grid cols-2">
       <Card title={role === 'cleaner' ? '🧹 我的保洁工单' : '🔧 维修 / 消毒工单'}
         extra={<div className="tabs" style={{ margin: 0 }}>
           <button className={`tab ${filter === 'mine' ? 'active' : ''}`} onClick={() => setFilter('mine')}>待办/处理中</button>
@@ -79,6 +82,7 @@ function TaskBoard({ user, state, role }: Props & { role: 'cleaner' | 'maintenan
           </div>
           <IncidentList incidents={state.incidents.filter((i) => i.tasks.some((t) => t.role === role))} user={user} empty="暂无需要您参与的事件" />
         </Card>
+      </div>
       </div>
     </div>
   );

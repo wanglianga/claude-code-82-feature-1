@@ -695,6 +695,391 @@ export interface CoachingLesson {
   institutionNotifiedUserIds?: string[];
 }
 
+// ============ 培训机构包场与居民公益时段冲突协调 ============
+
+/** 机构资质材料核验项（平台不能直接覆盖居民预约，须先核验） */
+export type QualificationKey =
+  | 'businessLicense'   // 办学/营业执照
+  | 'coachCert'         // 教练资质（教练配置）
+  | 'guardCert'         // 救生员资质/配置
+  | 'insurance'         // 保险
+  | 'independentAccess' // 独立出入口
+  | 'changingRoom';     // 独立更衣/淋浴需求
+
+export const QUALIFICATION_LABEL: Record<QualificationKey, string> = {
+  businessLicense: '办学/营业执照',
+  coachCert: '教练资质与配置',
+  guardCert: '救生员资质与配置',
+  insurance: '场地/人员保险',
+  independentAccess: '独立出入口',
+  changingRoom: '独立更衣淋浴安排',
+};
+
+/** 资质核验状态：材料在申请时登记，运营逐项核验通过后方可批准 */
+export type VerifyState = 'unverified' | 'verified' | 'rejected';
+
+export interface QualificationItem {
+  key: QualificationKey;
+  /** 材料说明/编号/有效期等（机构申请时填报） */
+  detail: string;
+  state: VerifyState;
+  verifiedBy?: string;
+  verifiedAt?: string;
+  note?: string;
+}
+
+/** 机构包场申请中的教练配置 */
+export interface CoachAssignment {
+  name: string;
+  certNo: string;
+}
+
+/** 机构信用记录条目 */
+export interface CreditEvent {
+  id: string;
+  at: string;
+  type: 'overtime' | 'over_capacity' | 'occupy_welfare' | 'child_alone' | 'add_people' | 'complaint' | 'rectified';
+  title: string;
+  detail: string;
+  /** 扣分（正整数；rectified 整改通过可记 0 或回补） */
+  points: number;
+  recordedBy: string;
+  /** 是否已整改 */
+  rectified: boolean;
+  rectifiedAt?: string;
+  rectifiedNote?: string;
+  rentalId?: string;
+}
+
+/** 培训机构档案（资质、联系人、信用、限制） */
+export interface Institution {
+  id: string;
+  name: string;
+  /** 关联的平台账号（memberTier=institution） */
+  userId?: string;
+  contactName: string;
+  contactPhone: string;
+  /** 信用分起始 100，违规扣减、整改可部分回补 */
+  creditScore: number;
+  /** 押金余额（元）；频繁违规可被要求追加 */
+  deposit: number;
+  /** 是否被限制后续包场（信用过低或整改未完成） */
+  blocked: boolean;
+  blockReason?: string;
+  /** 要求每场额外增派救生员人数 */
+  requiredExtraGuards: number;
+  creditEvents: CreditEvent[];
+  createdAt: string;
+}
+
+/** 机构账单（一个场次包场一条账单，费用按泳道/时段/救生加班/储物柜/淋浴拆分） */
+export interface InstitutionBill {
+  id: string;
+  institutionId: string;
+  rentalId: string;
+  sessionId: string;
+  /** 已支付（机构对公/储值） */
+  paid: boolean;
+  paidAt?: string;
+  /** 支付方式：机构对公现金/转账 或 机构账号储值 */
+  paymentMethod: 'cash' | 'wallet';
+  items: InstitutionBillItem[];
+  /** 合计（拆分项求和，后端核算，前端不可改） */
+  total: number;
+  /** 押金扣减（违规赔偿时使用） */
+  depositDeducted: number;
+  note?: string;
+  createdAt: string;
+}
+
+export interface InstitutionBillItem {
+  /** lane=泳道时段 guard=救生员加班 locker=储物柜 shower=淋浴区占用 deposit=押金 */
+  kind: 'lane' | 'guard_overtime' | 'locker' | 'shower' | 'deposit';
+  label: string;
+  /** 数量（泳道数/救生员人次/储物柜数/淋浴位/小时） */
+  qty: number;
+  unitPrice: number;
+  amount: number;
+}
+
+/** 受冲突影响的居民预约（按特殊人群标签标出） */
+export type ResidentTag =
+  | 'elder_morning'   // 老人晨泳
+  | 'parent_child'    // 亲子时段
+  | 'public_welfare'  // 居民公益时段
+  | 'coaching'        // 教练课
+  | 'stored_value'    // 会员储值用户
+  | 'child'           // 含儿童
+  | 'deep_cert';      // 深水证用户
+
+export const RESIDENT_TAG_LABEL: Record<ResidentTag, string> = {
+  elder_morning: '老人晨泳',
+  parent_child: '亲子时段',
+  public_welfare: '居民公益',
+  coaching: '教练课',
+  stored_value: '会员储值',
+  child: '含儿童',
+  deep_cert: '深水证',
+};
+
+export type ReschedulePreference = 'pending' | 'agree' | 'reject';
+export type RescheduleResolution = 'keep' | 'reschedule' | 'refund' | 'voucher' | 'compressed';
+
+/** 包场冲突中的一笔居民预约及其改约征询/处置结果（全程进入场次记录） */
+export interface RentalResidentConflict {
+  bookingId: string;
+  bookingCode: string;
+  userId: string;
+  userName: string;
+  zoneId: ZoneId;
+  lane?: number;
+  kind: BookingKind;
+  partySize: number;
+  children: number;
+  paidAmount: number;
+  paymentMethod: Booking['paymentMethod'];
+  memberTier?: MemberTier;
+  tags: ResidentTag[];
+  /** 公益时段（老人晨泳等）——压缩/退费/补偿券口径 */
+  publicWelfare: boolean;
+  /** 征询状态：待回复 / 同意改约 / 不同意（保留原预约） */
+  preference: ReschedulePreference;
+  /** 平台提供的改约方案 */
+  offerSessionId?: string;
+  /** 是否额外补偿券 */
+  offerVoucher: boolean;
+  offerNote?: string;
+  notifiedAt?: string;
+  respondedAt?: string;
+  /** 最终处置：保留 / 改约 / 退费 / 补偿券 / 因范围压缩自然解消 */
+  resolution?: RescheduleResolution;
+  /** 改约后在目标场次生成的新预约 id */
+  migratedBookingId?: string;
+  /** 退费时的钱包流水 id */
+  refundTxnId?: string;
+  /** 发放补偿券数 */
+  voucherGranted?: number;
+  resolvedAt?: string;
+  /** 送达居民端的个人通知 id */
+  notificationId?: string;
+}
+
+/** 运营协调措施（可叠加多项） */
+export interface RentalCoordination {
+  /** 实际批准占用的泳道（拆分泳道；空 = 整区） */
+  lanes: number[];
+  /** 批准泳区（可被压缩到更小泳区） */
+  zoneId: ZoneId;
+  /** 缩短后的时段（不传=原申请时段） */
+  adjustedStart?: string;
+  adjustedEnd?: string;
+  shorten: boolean;
+  /** 限制后人数（<= 申请人数） */
+  approvedPartySize: number;
+  /** 批准儿童数 */
+  approvedChildren: number;
+  /** 增派救生员人数 */
+  extraGuards: number;
+  /** 是否暂停部分非公益泳道（腾挪名额，公益泳道不得占用） */
+  suspendNonWelfareLanes: boolean;
+  suspendedLaneDesc?: string;
+  /** 向改约居民提供补偿券 */
+  provideVoucher: boolean;
+  /** 是否需要机构追加押金（信用偏低时） */
+  requireDeposit: number;
+  note?: string;
+}
+
+/** 包场生命周期状态 */
+export type RentalStatus =
+  | 'applied'          // 已申请，待资质核验/冲突协调
+  | 'coordinating'    // 协调中（居民改约征询中）
+  | 'approved'        // 已批准（费用已入账单）
+  | 'rejected'        // 已驳回
+  | 'active'          // 当天进行中
+  | 'suspended'       // 现场违规被暂停
+  | 'ended'           // 包场时间结束，待清场复测门禁
+  | 'completed'       // 清场复测通过、居民预约已恢复
+  | 'cancelled';      // 取消
+
+/** 包场现场/收尾确认项 */
+export type RentalGateKey =
+  | 'roster'           // 前台核验机构名单
+  | 'visitorId'        // 访客身份核验
+  | 'insurance'        // 保险核验
+  | 'guardReposition'  // 救生员按包场人数重新站位
+  | 'cleaning'         // 保洁确认地面/淋浴/储物柜/消毒
+  | 'maintenance';     // 维修确认设备/消毒安排
+
+export const RENTAL_GATE_LABEL: Record<RentalGateKey, string> = {
+  roster: '前台核验机构名单',
+  visitorId: '访客身份核验',
+  insurance: '现场保险核验',
+  guardReposition: '救生员按包场人数重新站位',
+  cleaning: '保洁确认地面/淋浴/储物柜/消毒',
+  maintenance: '维修确认设备与消毒安排',
+};
+
+export type RentalGateState = {
+  done: boolean;
+  at?: string;
+  by?: string;
+  note?: string;
+};
+
+/** 清场恢复开放门禁（五项，全部完成才能恢复居民预约；未复测或未清场不得开放下一场） */
+export type RentalClearanceKey =
+  | 'clear_pool'       // 先清场
+  | 'clear_lockers'    // 清储物柜
+  | 'water_retest'     // 水质复测
+  | 'equipment_reset'  // 设备复位
+  | 'guard_patrol';    // 救生巡查确认
+
+export const RENTAL_CLEARANCE_LABEL: Record<RentalClearanceKey, string> = {
+  clear_pool: '清场（机构人员全部撤离）',
+  clear_lockers: '清储物柜（无遗落、全部清空）',
+  water_retest: '水质复测达标',
+  equipment_reset: '设备复位（泳道线/救生器材/更衣淋浴）',
+  guard_patrol: '救生巡查确认（各泳道秩序与安全）',
+};
+
+export type RentalClearanceState = {
+  done: boolean;
+  at?: string;
+  by?: string;
+  note?: string;
+  /** 水质复测项关联的达标读数 id */
+  readingId?: string;
+};
+
+/** 现场违规记录（超人数/超时/占公益泳道/儿童无人陪同/私自加人 → 可暂停包场并通知社区运营） */
+export interface RentalViolation {
+  id: string;
+  at: string;
+  type: CreditEvent['type'];
+  title: string;
+  detail: string;
+  reportedBy: string;
+  /** 是否当场暂停包场 */
+  suspended: boolean;
+  /** 信用扣分 */
+  points: number;
+  /** 整改要求 */
+  rectifyNote?: string;
+  /** 是否已整改并恢复 */
+  resolved: boolean;
+  resolvedAt?: string;
+  /** 关联协同事件 id */
+  incidentId?: string;
+  /** 恢复/继续的批准人 */
+  resumedBy?: string;
+}
+
+/** 设施容量（申请时用于冲突检测：更衣淋浴、储物柜） */
+export interface FacilityInfo {
+  /** 更衣淋浴容量（同时使用人数） */
+  showerCapacity: number;
+  /** 储物柜总数 */
+  lockerCount: number;
+  /** 申请占用储物柜数 */
+  lockersNeeded: number;
+  /** 是否使用独立更衣/淋浴 */
+  independentChanging: boolean;
+  showerNote?: string;
+}
+
+/** 一条时间线留痕（所有冲突协调/改约/补偿/机构确认/恢复结果进入场次记录） */
+export interface RentalAuditEntry {
+  at: string;
+  by: string;
+  byRole: Role;
+  event: string;
+  detail?: string;
+}
+
+/** 冲突预览返回结构（申请前先按日期/时段/泳道/泳区/容量/救生排班/已预约居民列出） */
+export interface RentalConflictPreview {
+  sessionId: string;
+  sessionLabel: string;
+  date: string;
+  start: string;
+  end: string;
+  publicWelfare: boolean;
+  zoneId: ZoneId;
+  zoneName: string;
+  lanes: (number | undefined)[];
+  /** 泳区容量冲突 */
+  capacity: { zoneCapacity: number; inPool: number; booked: number; locked: number; applying: number; overflow: number };
+  /** 更衣淋浴容量冲突 */
+  shower: { capacity: number; occupied: number; applying: number; overflow: number };
+  /** 储物柜冲突 */
+  locker: { total: number; occupied: number; needed: number; remaining: number; shortfall: number };
+  /** 救生员排班现状 */
+  guards: { post: GuardPost; postLabel: string; guardName: string }[];
+  /** 已预约居民（含标签） */
+  residents: RentalResidentConflict[];
+  /** 老人晨泳/亲子/公益/教练课/会员储值 命中数 */
+  tagCounts: Partial<Record<ResidentTag, number>>;
+  /** 现有商业/教学锁区 */
+  existingLocks: { id: string; title: string; zoneId: ZoneId; lane?: number; capacity: number; isCommercial: boolean }[];
+  /** 冲突结论文案 */
+  conflicts: string[];
+}
+
+/** 机构包场协调主记录 */
+export interface InstitutionRental {
+  id: string;
+  code: string;                 // IR-xxxx
+  institutionId: string;
+  /** 申请联系人账号（如有） */
+  applicantUserId?: string;
+  sessionId: string;
+  /** 申请泳区/泳道（lanes 空=整区） */
+  requestZoneId: ZoneId;
+  requestLanes: number[];
+  requestStart: string;
+  requestEnd: string;
+  partySize: number;            // 总人数
+  adultCount: number;
+  childCount: number;
+  ageMin?: number;
+  ageMax?: number;
+  hasChildren: boolean;
+  /** 儿童离陪规则核验：成人陪同人数、一对一比例要求 */
+  companions: number;
+  companionRequirement: string;
+  purpose: string;
+  facility: FacilityInfo;
+  qualifications: QualificationItem[];
+  coachAssignments: CoachAssignment[];
+  /** 保险单号/有效期（申请登记，前台当天核验） */
+  insurancePolicyNo: string;
+  insuranceExpiry: string;
+  status: RentalStatus;
+  conflictPreview: RentalConflictPreview;
+  residentConflicts: RentalResidentConflict[];
+  coordination?: RentalCoordination;
+  billId?: string;
+  /** 批准/驳回 */
+  decidedBy?: string;
+  decidedAt?: string;
+  decisionNote?: string;
+  /** 机构对协调方案（费用/范围）的确认 */
+  institutionConfirmed: boolean;
+  institutionConfirmedAt?: string;
+  gates: Record<RentalGateKey, RentalGateState>;
+  violations: RentalViolation[];
+  clearance: Record<RentalClearanceKey, RentalClearanceState>;
+  /** 恢复开放结果 */
+  reopenedAt?: string;
+  reopenedBy?: string;
+  reopenNote?: string;
+  /** 批准时写入场次的锁区 id（恢复时释放） */
+  lockId?: string;
+  audit: RentalAuditEntry[];
+  createdAt: string;
+}
+
 /** 实时看板（救生员端 + 运营） */
 export interface ZoneLiveStat {
   zoneId: ZoneId;
@@ -747,6 +1132,14 @@ export interface DB {
   crampRescues: CrampRescue[];
   /** 救生员培训项（复盘结果进入培训与排班） */
   guardTraining: GuardTrainingItem[];
+  /** 培训机构档案（资质/信用/押金/限制） */
+  institutions: Institution[];
+  /** 机构包场协调记录（申请→核验→协调→批准→当天→违规→清场→恢复全生命周期） */
+  rentals: InstitutionRental[];
+  /** 机构账单（费用按泳道/时段/救生加班/储物柜/淋浴拆分） */
+  institutionBills: InstitutionBill[];
+  /** 场地设施容量（更衣淋浴、储物柜），包场冲突检测用 */
+  facilities: { showerCapacity: number; lockerCount: number };
   counters: Record<string, number>;
   seededAt: string;
 }
@@ -923,6 +1316,109 @@ export interface LockReq {
   isCommercial: boolean;
 }
 
+// ============ 机构包场冲突协调请求 ============
+export interface RentalApplyReq {
+  institutionId?: string;
+  /** 机构名称（无档案时申请并建档） */
+  institutionName?: string;
+  sessionId: string;
+  zoneId: ZoneId;
+  /** 申请泳道（空数组=整区） */
+  lanes?: number[];
+  start?: string;
+  end?: string;
+  partySize: number;
+  adultCount: number;
+  childCount: number;
+  ageMin?: number;
+  ageMax?: number;
+  /** 成人陪同人数（含儿童时按儿童离陪规则核验） */
+  companions: number;
+  purpose: string;
+  lockersNeeded: number;
+  showerCapacity: number;
+  independentChanging: boolean;
+  showerNote?: string;
+  /** 资质材料：key -> 说明/编号 */
+  qualifications?: Partial<Record<QualificationKey, string>>;
+  coaches?: { name: string; certNo: string }[];
+  insurancePolicyNo: string;
+  insuranceExpiry: string;
+}
+
+export interface RentalQualVerifyReq {
+  key: QualificationKey;
+  pass: boolean;
+  note?: string;
+}
+
+export interface RentalCoordinationReq {
+  zoneId: ZoneId;
+  lanes: number[];
+  shorten: boolean;
+  adjustedStart?: string;
+  adjustedEnd?: string;
+  approvedPartySize: number;
+  approvedChildren: number;
+  extraGuards: number;
+  suspendNonWelfareLanes: boolean;
+  suspendedLaneDesc?: string;
+  provideVoucher: boolean;
+  requireDeposit: number;
+  note?: string;
+}
+
+export interface RentalOpenRescheduleReq {
+  /** 给居民的改约目标场次；不传则由系统选取同日后续场 */
+  offerSessionId?: string;
+  offerVoucher?: boolean;
+  offerNote?: string;
+}
+
+export interface RentalRescheduleResponseReq {
+  agree: boolean;
+}
+
+export interface RentalResolveResidentReq {
+  bookingId: string;
+  /** keep=保留原预约（压缩包场范围） refund=退费 voucher=退费+补偿券 reschedule=按方案改约 compressed=范围压缩后已不冲突，保留 */
+  resolution: 'keep' | 'refund' | 'voucher' | 'reschedule' | 'compressed';
+  targetSessionId?: string;
+}
+
+export interface RentalApproveReq {
+  note?: string;
+  /** 账单支付方式：机构对公现金/转账 或 机构账号储值 */
+  paymentMethod?: 'cash' | 'wallet';
+}
+
+export interface RentalGateReq {
+  note?: string;
+  /** 救生重新站位：附加说明（人数/岗位） */
+  guardPlan?: string;
+}
+
+export interface RentalViolationReq {
+  type: 'overtime' | 'over_capacity' | 'occupy_welfare' | 'child_alone' | 'add_people' | 'complaint';
+  detail: string;
+  /** 是否当场暂停包场 */
+  suspend: boolean;
+  rectifyNote?: string;
+  points?: number;
+}
+
+export interface RentalClearanceReq {
+  note?: string;
+}
+
+export interface InstitutionRestrictionReq {
+  blocked: boolean;
+  blockReason?: string;
+  requiredExtraGuards?: number;
+  /** 追加/退还押金 */
+  depositDelta?: number;
+}
+
 export interface Me {
   user: User;
   zoneConflicts: { sessionId: string; sessionLabel: string; message: string }[];
@@ -961,6 +1457,14 @@ export interface StateView {
   crampRescues: CrampRescue[];
   /** 救生员培训项（运营全量；救生员见与本人/全体相关项） */
   guardTraining: GuardTrainingItem[];
+  /** 机构包场协调记录：运营/前台全量；救生/保洁/维修见当天本岗协同；居民仅见与本人改约相关包场 */
+  rentals: InstitutionRental[];
+  /** 机构档案：仅运营（信用/押金/限制处置所需） */
+  institutions: Institution[];
+  /** 机构账单：仅运营/前台（财务）；居民不下发 */
+  institutionBills: InstitutionBill[];
+  /** 场地设施容量 */
+  facilities: { showerCapacity: number; lockerCount: number };
   boards: LiveBoard[];
   conflicts: { sessionId: string; sessionLabel: string; message: string }[];
 }

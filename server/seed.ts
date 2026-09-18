@@ -1,7 +1,7 @@
 import type {
   DB, User, Zone, Session, Booking, WaterReading, Equipment, GuardDuty,
   PatrolIssue, WorkTask, Complaint, Notification, WalletTxn, CoachingLesson,
-  CrampRescue, GuardTrainingItem,
+  CrampRescue, GuardTrainingItem, Institution, InstitutionRental, RentalResidentConflict,
 } from '../shared/types.js';
 
 // 以“当前时刻”为锚生成演示数据：上午公众场正在进行、在池有人、水质读数与上哨时间都在过去，
@@ -67,9 +67,7 @@ export function seed(): DB {
     },
     {
       id: 's-pm', label: '下午公众场', date, start: hhmm(150), end: hhmm(270),
-      poolStatus: 'normal', maxCapacity: 154, locks: [
-        { id: 'lock-2', zoneId: 'family', reason: 'institution_rental', title: '蓝鲸游泳培训机构·少儿包场（洽谈中）', contactName: '赵晓', contactPhone: '13800000005', capacity: 30, isCommercial: true },
-      ],
+      poolStatus: 'normal', maxCapacity: 154, locks: [],
       guardFocusLanes: [
         { zoneId: 'shallow', lane: 2, version: 1, by: '刘救生', history: [],
           reason: '早场老人晨泳 2 号道抽筋救援 CR-2059 第1版站位策略：持续重点关注',
@@ -219,10 +217,100 @@ export function seed(): DB {
 
   sessions[0].crampRescueCount = 1;
 
+  // ---- 机构包场与居民公益时段冲突协调（下午场亲子区：蓝鲸少儿包场 vs 居民亲子预约 B-2066） ----
+  const pm = sessions[2];
+  const bk2066 = bookings.find((b) => b.code === 'B-2066')!;
+
+  const institutionLan: Institution = {
+    id: 'inst-lan', name: '蓝鲸游泳培训', userId: 'u-lan',
+    contactName: '赵晓', contactPhone: '13800000005',
+    creditScore: 82, deposit: 500, blocked: false, requiredExtraGuards: 0,
+    creditEvents: [
+      { id: 'ce-seed-1', at: rel(-60 * 24 * 8), type: 'overtime', title: '超时滞留', detail: '上月晚场包场超时 18 分钟清场', points: 8, recordedBy: '孙运营', rectified: true, rectifiedAt: rel(-60 * 24 * 7), rectifiedNote: '已书面承诺按时清场', rentalId: undefined },
+      { id: 'ce-seed-2', at: rel(-60 * 24 * 3), type: 'over_capacity', title: '实际超人数', detail: '签到 32 人超过批准 30 人', points: 10, recordedBy: '陈前台', rectified: true, rectifiedAt: rel(-60 * 24 * 3), rectifiedNote: '当日劝退 2 人，已整改' },
+    ],
+    createdAt: rel(-60 * 24 * 30),
+  };
+
+  const rentalConflictLi: RentalResidentConflict = {
+    bookingId: bk2066.id, bookingCode: bk2066.code, userId: 'u-li', userName: '李娟',
+    zoneId: bk2066.zoneId, lane: bk2066.lane, kind: bk2066.kind, partySize: 2, children: 1,
+    paidAmount: 40, paymentMethod: 'wallet', memberTier: 'silver',
+    tags: ['parent_child', 'child', 'stored_value'],
+    publicWelfare: false, preference: 'pending',
+    offerSessionId: 's-eve', offerVoucher: true,
+    offerNote: '可改约至晚场亲子区，另补偿 1 张券', notifiedAt: rel(-25),
+  };
+
+  const rentalSeed: InstitutionRental = {
+    id: 'ir-seed-1', code: 'IR-2101', institutionId: 'inst-lan', applicantUserId: 'u-lan',
+    sessionId: 's-pm', requestZoneId: 'family', requestLanes: [],
+    requestStart: pm.start, requestEnd: pm.end,
+    partySize: 30, adultCount: 6, childCount: 24, ageMin: 7, ageMax: 12,
+    hasChildren: true, companions: 8,
+    companionRequirement: '未成年学员每 3 名至少 1 名成人陪同（1:3），教练/救生员不计入陪同',
+    purpose: '暑期少儿自由泳提高集训',
+    facility: { showerCapacity: 60, lockerCount: 220, lockersNeeded: 30, independentChanging: true, showerNote: '使用东侧独立更衣淋浴区' },
+    qualifications: [
+      { key: 'businessLicense', detail: '办学许可证 教民13201007号，有效期至 2027-12-31', state: 'verified', verifiedBy: '孙运营', verifiedAt: rel(-40) },
+      { key: 'coachCert', detail: '社会体育指导员（游泳）×3：马教练/林教练/高教练', state: 'verified', verifiedBy: '孙运营', verifiedAt: rel(-40) },
+      { key: 'guardCert', detail: '救生员证 ×2（随队），另申请场馆增派 1 名', state: 'verified', verifiedBy: '孙运营', verifiedAt: rel(-40) },
+      { key: 'insurance', detail: '保单号 INS-LJ-2026-088，有效期至 2026-12-31', state: 'verified', verifiedBy: '孙运营', verifiedAt: rel(-40) },
+      { key: 'independentAccess', detail: '使用东侧独立出入口，与居民流线分离', state: 'unverified' },
+      { key: 'changingRoom', detail: '申请东侧独立更衣淋浴区（容量 60）', state: 'unverified' },
+    ],
+    coachAssignments: [
+      { name: '马教练', certNo: 'SWIM-COACH-0231' },
+      { name: '林教练', certNo: 'SWIM-COACH-0417' },
+    ],
+    insurancePolicyNo: 'INS-LJ-2026-088', insuranceExpiry: '2026-12-31',
+    status: 'coordinating',
+    conflictPreview: {
+      sessionId: 's-pm', sessionLabel: pm.label, date: pm.date, start: pm.start, end: pm.end,
+      publicWelfare: false, zoneId: 'family', zoneName: '亲子儿童区', lanes: [undefined],
+      capacity: { zoneCapacity: 40, inPool: 0, booked: 2, locked: 0, applying: 30, overflow: 0 },
+      shower: { capacity: 60, occupied: 0, applying: 30, overflow: 0 },
+      locker: { total: 220, occupied: 0, needed: 30, remaining: 220, shortfall: 0 },
+      guards: [],
+      residents: [{ ...rentalConflictLi }],
+      tagCounts: { parent_child: 1, child: 1, stored_value: 1 },
+      existingLocks: [],
+      conflicts: [
+        '申请范围已有 1 笔居民预约（共 2 人），平台不能直接覆盖，须逐人协调改约或压缩包场',
+        '冲突范围内含亲子/儿童预约 B-2066，须保留并逐人征询',
+        '含会员储值用户 1 笔，退改须按原储值渠道返还',
+      ],
+    },
+    residentConflicts: [{ ...rentalConflictLi }],
+    coordination: {
+      lanes: [], zoneId: 'family', shorten: false,
+      approvedPartySize: 26, approvedChildren: 21, extraGuards: 1,
+      suspendNonWelfareLanes: false, provideVoucher: true, requireDeposit: 500,
+      note: '建议压缩到亲子区东侧并限 26 人；居民 B-2066 不同意改约则保留并进一步压缩为 3 条道',
+    },
+    institutionConfirmed: false,
+    gates: {
+      roster: { done: false }, visitorId: { done: false }, insurance: { done: false },
+      guardReposition: { done: false }, cleaning: { done: false }, maintenance: { done: false },
+    },
+    violations: [],
+    clearance: {
+      clear_pool: { done: false }, clear_lockers: { done: false }, water_retest: { done: false },
+      equipment_reset: { done: false }, guard_patrol: { done: false },
+    },
+    audit: [
+      { at: rel(-30), by: '赵晓', byRole: 'resident', event: '提交包场申请', detail: '蓝鲸游泳培训 申请 亲子儿童区整区 30 人（儿童 24），冲突 3 项' },
+      { at: rel(-25), by: '孙运营', byRole: 'ops', event: '向居民发起逐人改约征询', detail: '目标场次 晚场·暑期儿童高峰，补偿券 是' },
+    ],
+    createdAt: rel(-30),
+  };
+
   return {
     users, zones, sessions, bookings, waterReadings, equipment, guardDuties,
     patrolIssues: [...patrolIssues], incidents: [], workTasks, complaints, notifications, walletTxns,
     lessons, closureRecords: [], crampRescues, guardTraining,
+    institutions: [institutionLan], rentals: [rentalSeed], institutionBills: [],
+    facilities: { showerCapacity: 60, lockerCount: 220 },
     counters: { seq }, seededAt: new Date().toISOString(),
   };
 }

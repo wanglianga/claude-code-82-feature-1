@@ -123,7 +123,7 @@ const NAV: Record<Role, { key: string; label: string; icon: string }[]> = {
   ops: [
     { key: 'command', label: '场次指挥台', icon: '🎛️' },
     { key: 'rescue', label: '救援复盘培训', icon: '🆘' },
-    { key: 'conflict', label: '商业/公益冲突', icon: '⚖️' },
+    { key: 'conflict', label: '包场冲突协调', icon: '⚖️' },
     { key: 'close', label: '闭池与恢复', icon: '🌧️' },
     { key: 'incident', label: '事件指挥', icon: '🚨' },
     { key: 'tasks', label: '工单派发', icon: '📋' },

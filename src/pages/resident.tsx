@@ -12,6 +12,7 @@ import {
 import { priceOf } from '../../shared/logic.js';
 import { visibleNotifications } from '../components/notifications.js';
 import { IncidentList } from '../components/incident.js';
+import { ResidentRentalOffers } from '../components/rental.js';
 
 type Props = { user: User; state: AppState; tab: string };
 
@@ -230,7 +231,9 @@ function MyBookings({ user, state }: Props) {
   const [amount, setAmount] = useState(100);
 
   return (
-    <div className="grid cols-2">
+    <div className="grid">
+      <ResidentRentalOffers user={user} state={state} />
+      <div className="grid cols-2">
       <Card title="我的预约">
         {mine.length === 0 ? <Empty text="还没有预约，去「预约入场」下单吧" /> : (
           <div className="table-wrap">
@@ -293,6 +296,7 @@ function MyBookings({ user, state }: Props) {
               ))}</tbody></table></div>
           )}
         </Card>
+      </div>
       </div>
     </div>
   );

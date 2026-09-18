@@ -9,6 +9,7 @@ import {
 import { SessionPicker, PoolStatusBanner } from '../components/common.js';
 import { IncidentList, IncidentCreateForm } from '../components/incident.js';
 import { visibleNotifications } from '../components/notifications.js';
+import { RentalDayBoard } from '../components/rental.js';
 
 type Props = { user: User; state: AppState; tab: string };
 
@@ -94,6 +95,8 @@ function CheckInDesk({ user, state }: Props) {
     <div>
       <SessionPicker sessions={state.sessions} value={sessionId} onChange={(v) => { setSessionId(v); setSelected(null); }} />
       <PoolStatusBanner status={session.poolStatus} reason={session.statusReason} requireRetest={session.requireWaterRetest} closedAt={session.closedAt} reopenedAt={session.reopenedAt} />
+
+      <RentalDayBoard user={user} state={state} />
 
       <RescueStrip state={state} sessionId={sessionId} />
 

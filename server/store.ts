@@ -14,6 +14,10 @@ function load(): DB {
         if (!Array.isArray(data.closureRecords)) data.closureRecords = [];
         if (!Array.isArray(data.crampRescues)) data.crampRescues = [];
         if (!Array.isArray(data.guardTraining)) data.guardTraining = [];
+        if (!Array.isArray(data.institutions)) data.institutions = [];
+        if (!Array.isArray(data.rentals)) data.rentals = [];
+        if (!Array.isArray(data.institutionBills)) data.institutionBills = [];
+        if (!data.facilities) data.facilities = { showerCapacity: 60, lockerCount: 220 };
         for (const s of data.sessions) {
           if (!Array.isArray(s.closureIds)) s.closureIds = [];
           if (!Array.isArray(s.suspendedLanes)) s.suspendedLanes = [];
