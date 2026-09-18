@@ -9,6 +9,7 @@ import {
 import { SessionPicker, PoolStatusBanner } from '../components/common.js';
 import { IncidentList, IncidentCreateForm } from '../components/incident.js';
 import { visibleNotifications } from '../components/notifications.js';
+import { RentalFrontline } from '../components/rental-frontline.js';
 
 type Props = { user: User; state: AppState; tab: string };
 
@@ -250,5 +251,6 @@ function NoticeTab({ user, state }: Props) {
 export function FrontdeskPage(props: Props) {
   if (props.tab === 'incident') return <IncidentTab {...props} />;
   if (props.tab === 'notice') return <NoticeTab {...props} />;
+  if (props.tab === 'rental') return <RentalFrontline user={props.user} state={props.state} role="frontdesk" />;
   return <CheckInDesk {...props} />;
 }

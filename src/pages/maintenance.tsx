@@ -5,6 +5,7 @@ import { useAction } from '../api.js';
 import { Badge, Card, Empty, TASK_STATUS_LABEL, EQUIPMENT_LABEL, fmtDateTime, useNotify } from '../ui.js';
 import { SessionPicker, PoolStatusBanner } from '../components/common.js';
 import { IncidentList, IncidentCreateForm } from '../components/incident.js';
+import { RentalFrontline } from '../components/rental-frontline.js';
 import { WATER_STD } from '../../shared/logic.js';
 
 type Props = { user: User; state: AppState; tab: string };
@@ -133,5 +134,6 @@ function IncidentTab({ user, state }: Props) {
 export function MaintenancePage(props: Props) {
   if (props.tab === 'equip') return <EquipWater {...props} />;
   if (props.tab === 'incident') return <IncidentTab {...props} />;
+  if (props.tab === 'rental') return <RentalFrontline user={props.user} state={props.state} role="maintenance" />;
   return <Tasks {...props} />;
 }

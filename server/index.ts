@@ -14,6 +14,12 @@ import {
   createCrampRescue, confirmRescueClosure, adjustRescuePost, acknowledgeFocusLane,
   reviewCrampRescue, completeTraining,
 } from './cramp.js';
+import {
+  applyRental, qualifyRental, rejectRental, coordinateRental, answerRebook, expireRebook,
+  orgConfirmRental, setActualCount, checkDayItem, startRental, reportRentalViolation,
+  rectifyRentalViolation, checkCloseoutItem, reopenAfterRental, settleRentalBill,
+  setOrgRestriction, rentalConflictScope, allOrgCreditProfiles,
+} from './rental.js';
 import { buildStateView, sanitizeSessionDetail, visibleConflictsFor } from './views.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -355,6 +361,150 @@ app.post('/api/guard-training/:id/done', auth, roles('lifeguard', 'ops'), (req, 
     return completeTraining(db, req.params.id, String(req.body?.result || '') || undefined);
   });
   res.json(item);
+});
+
+// ============ 机构包场与居民公益时段冲突协调 ============
+// 申请前冲突范围预览（机构/运营）：日期时段、泳道泳区、更衣淋浴、储物柜、救生排班、已预约居民与特殊人群标注
+app.post('/api/rentals/preview', auth, roles('resident', 'ops', 'frontdesk'), (req, res) => {
+  const user = (req as any).user as User;
+  const scope = mutate((db) => {
+    if (user.memberTier !== 'institution' && user.role !== 'ops')
+      throw new HttpError(403, '仅培训机构账号可预览包场冲突范围');
+    return rentalConflictScope(db, {
+      sessionId: String(req.body?.sessionId || ''),
+      zoneId: req.body?.zoneId,
+      lanes: Array.isArray(req.body?.lanes) ? req.body.lanes.map(Number) : undefined,
+      partySize: Math.max(1, Number(req.body?.partySize) || 0),
+      showerSeats: Number(req.body?.showerSeats) || 0,
+      lockerCount: Number(req.body?.lockerCount) || 0,
+      containsChildren: Number(req.body?.childCount) > 0,
+    });
+  });
+  res.json(scope);
+});
+
+app.post('/api/rentals', auth, roles('resident', 'ops'), (req, res) => {
+  const user = (req as any).user as User;
+  const result = mutate((db) => applyRental(db, user, req.body));
+  res.status(201).json(result);
+});
+
+app.post('/api/rentals/:id/qualify', auth, roles('ops'), (req, res) => {
+  const user = (req as any).user as User;
+  const rc = mutate((db) => qualifyRental(db, user, req.params.id, req.body));
+  res.json(rc);
+});
+
+app.post('/api/rentals/:id/reject', auth, roles('ops'), (req, res) => {
+  const user = (req as any).user as User;
+  const rc = mutate((db) => rejectRental(db, user, req.params.id, String(req.body?.reason || '')));
+  res.json(rc);
+});
+
+app.post('/api/rentals/:id/coordinate', auth, roles('ops'), (req, res) => {
+  const user = (req as any).user as User;
+  const rc = mutate((db) => coordinateRental(db, user, req.params.id, req.body));
+  res.json(rc);
+});
+
+// 居民答复本人改约提议（同意=迁移+补偿到账；拒绝=保留原预约并压缩包场）
+app.post('/api/rentals/:id/rebook/:bookingId', auth, roles('resident', 'ops'), (req, res) => {
+  const user = (req as any).user as User;
+  const rc = mutate((db) => answerRebook(db, user, req.params.id, req.params.bookingId,
+    !!req.body?.accept, String(req.body?.note || '') || undefined));
+  res.json(rc);
+});
+
+app.post('/api/rentals/:id/rebook/:bookingId/expire', auth, roles('ops'), (req, res) => {
+  const user = (req as any).user as User;
+  const rc = mutate((db) => expireRebook(db, user, req.params.id, req.params.bookingId));
+  res.json(rc);
+});
+
+// 机构确认协调方案（费用五项拆分进入机构账单）
+app.post('/api/rentals/:id/confirm', auth, roles('resident', 'ops'), (req, res) => {
+  const user = (req as any).user as User;
+  const rc = mutate((db) => orgConfirmRental(db, user, req.params.id, String(req.body?.note || '') || undefined));
+  res.json(rc);
+});
+
+// 前台登记实际到场人数
+app.post('/api/rentals/:id/actual-count', auth, roles('frontdesk', 'ops'), (req, res) => {
+  const user = (req as any).user as User;
+  const rc = mutate((db) => setActualCount(db, user, req.params.id, Number(req.body?.actualCount),
+    String(req.body?.note || '') || undefined));
+  res.json(rc);
+});
+
+// 包场当天分岗核验（前台名单/访客/保险；救生重新站位；保洁；维修）
+app.post('/api/rentals/:id/day-check', auth, roles('frontdesk', 'lifeguard', 'cleaner', 'maintenance', 'ops'), (req, res) => {
+  const user = (req as any).user as User;
+  const rc = mutate((db) => checkDayItem(db, user, req.params.id, {
+    key: String(req.body?.key || ''), done: req.body?.done !== false,
+    note: req.body?.note, guardNames: Array.isArray(req.body?.guardNames) ? req.body.guardNames : undefined,
+  }));
+  res.json(rc);
+});
+
+app.post('/api/rentals/:id/start', auth, roles('frontdesk', 'ops'), (req, res) => {
+  const user = (req as any).user as User;
+  const rc = mutate((db) => startRental(db, user, req.params.id));
+  res.json(rc);
+});
+
+// 现场违规（超人数/超时/占公益道/儿童脱陪/私自加人）→ 可暂停并通知运营、计入信用
+app.post('/api/rentals/:id/violations', auth, roles('frontdesk', 'lifeguard', 'ops'), (req, res) => {
+  const user = (req as any).user as User;
+  const rc = mutate((db) => reportRentalViolation(db, user, req.params.id, {
+    type: req.body?.type, description: String(req.body?.description || ''),
+    actualCount: req.body?.actualCount ? Number(req.body.actualCount) : undefined,
+    suspend: !!req.body?.suspend,
+  }));
+  res.status(201).json(rc);
+});
+
+app.post('/api/rentals/:id/violations/:vid/rectify', auth, roles('ops'), (req, res) => {
+  const user = (req as any).user as User;
+  const rc = mutate((db) => rectifyRentalViolation(db, user, req.params.id, req.params.vid,
+    String(req.body?.note || '已现场整改')));
+  res.json(rc);
+});
+
+// 包场结束清场恢复门禁（清场/清柜/复测/设备复位/救生巡查）
+app.post('/api/rentals/:id/closeout', auth, roles('frontdesk', 'lifeguard', 'cleaner', 'maintenance', 'ops'), (req, res) => {
+  const user = (req as any).user as User;
+  const rc = mutate((db) => checkCloseoutItem(db, user, req.params.id, {
+    key: String(req.body?.key || '') as 'cleared' | 'lockersCleared' | 'waterRetested' | 'equipmentReset' | 'guardPatrolConfirmed',
+    done: req.body?.done !== false, note: req.body?.note,
+    reading: req.body?.reading, waterReadingId: req.body?.waterReadingId,
+  }));
+  res.json(rc);
+});
+
+app.post('/api/rentals/:id/reopen', auth, roles('lifeguard', 'ops'), (req, res) => {
+  const user = (req as any).user as User;
+  const rc = mutate((db) => reopenAfterRental(db, user, req.params.id));
+  res.json(rc);
+});
+
+app.post('/api/rentals/:id/settle', auth, roles('ops'), (req, res) => {
+  const user = (req as any).user as User;
+  const bill = mutate((db) => settleRentalBill(db, user, req.params.id, {
+    paymentMethod: req.body?.paymentMethod, depositDeducted: Number(req.body?.depositDeducted) || 0,
+    note: String(req.body?.note || '') || undefined,
+  }));
+  res.json(bill);
+});
+
+app.post('/api/orgs/:orgUserId/restriction', auth, roles('ops'), (req, res) => {
+  const user = (req as any).user as User;
+  const profile = mutate((db) => setOrgRestriction(db, user, req.params.orgUserId, {
+    rentalRestricted: !!req.body?.rentalRestricted,
+    requiredExtraLifeguards: Number(req.body?.requiredExtraLifeguards),
+    depositMultiplier: Number(req.body?.depositMultiplier),
+    note: String(req.body?.note || '') || undefined,
+  }));
+  res.json(profile);
 });
 
 // ============ 锁区（商业包场/教学道） ============

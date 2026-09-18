@@ -14,10 +14,14 @@ function load(): DB {
         if (!Array.isArray(data.closureRecords)) data.closureRecords = [];
         if (!Array.isArray(data.crampRescues)) data.crampRescues = [];
         if (!Array.isArray(data.guardTraining)) data.guardTraining = [];
+        if (!Array.isArray(data.rentalCases)) data.rentalCases = [];
+        if (!Array.isArray(data.orgBills)) data.orgBills = [];
+        if (!Array.isArray(data.orgCreditRecords)) data.orgCreditRecords = [];
         for (const s of data.sessions) {
           if (!Array.isArray(s.closureIds)) s.closureIds = [];
           if (!Array.isArray(s.suspendedLanes)) s.suspendedLanes = [];
           if (!Array.isArray(s.guardFocusLanes)) s.guardFocusLanes = [];
+          if (!Array.isArray(s.rentalCaseIds)) s.rentalCaseIds = [];
           // 兼容版本化前的关注泳道：补齐版本号与历史数组
           for (const f of s.guardFocusLanes) {
             if (typeof f.version !== 'number') f.version = 1;

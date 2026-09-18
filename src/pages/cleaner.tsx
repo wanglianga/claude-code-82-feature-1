@@ -4,6 +4,7 @@ import type { AppState } from '../api.js';
 import { useAction } from '../api.js';
 import { Badge, Card, Empty, TASK_STATUS_LABEL, ISSUE_TYPE_LABEL, fmtDateTime, useNotify } from '../ui.js';
 import { IncidentList, IncidentCreateForm } from '../components/incident.js';
+import { RentalFrontline } from '../components/rental-frontline.js';
 
 type Props = { user: User; state: AppState; tab: string };
 
@@ -129,5 +130,6 @@ function IncidentTab({ user, state }: Props) {
 export function CleanerPage(props: Props) {
   if (props.tab === 'patrol') return <PatrolReport {...props} kind="cleaning" />;
   if (props.tab === 'incident') return <IncidentTab {...props} />;
+  if (props.tab === 'rental') return <RentalFrontline user={props.user} state={props.state} role="cleaner" />;
   return <TaskBoard {...props} role="cleaner" />;
 }

@@ -24,13 +24,22 @@ export { WATER_STD, evaluateWater, priceOf };
 // ============ 查询辅助 ============
 export function activeBookings(db: DB, sessionId: string): Booking[] {
   return db.bookings.filter(
-    (b) => b.sessionId === sessionId && b.status !== 'cancelled' && b.status !== 'refunded' && b.status !== 'compensated',
+    (b) => b.sessionId === sessionId && b.status !== 'cancelled' && b.status !== 'refunded'
+      && b.status !== 'compensated' && b.status !== 'rebooked',
   );
 }
 
 export function zoneLocked(db: DB, session: Session, zoneId: ZoneId, lane?: number) {
   let seats = 0;
-  const hits = session.locks.filter((l) => {
+  // 处于申请/核验/协商中的包场锁区仅为占位：不提前锁死居民名额、不覆盖居民预约；
+  // 仅协调通过且机构确认（approved/active/suspended/completed）后才实际占用容量。
+  const effectiveLocks = session.locks.filter((l) => {
+    if (!l.rentalCaseId || !db.rentalCases?.length) return true;
+    const rc = db.rentalCases.find((r) => r.id === l.rentalCaseId);
+    if (!rc) return true;
+    return !['pending', 'verifying', 'coordinating', 'rejected', 'cancelled'].includes(rc.status);
+  });
+  const hits = effectiveLocks.filter((l) => {
     if (l.zoneId !== zoneId) return false;
     if (lane == null) return true;
     if (l.lane == null) return true; // 整区锁定覆盖所有泳道
@@ -297,7 +306,6 @@ export function createBooking(db: DB, userId: string, req: {
       capacity: partySize, isCommercial: true, bookingId: booking.id,
     };
     session.locks.push(lock);
-    session.locks.push(lock);
     const rawConflicts = lockConflicts(db, session, lock);
     // 机构账号本身是居民角色：可获知冲突与挤压人数，但不回显其他居民预约码
     conflictWarnings = user.role === 'resident'
@@ -335,6 +343,21 @@ export function checkIn(db: DB, bookingId: string, operator: string, req: {
   if (b.status !== 'booked') throw new HttpError(409, `当前状态不可入场：${b.status}`);
   const session = db.sessions.find((s) => s.id === b.sessionId)!;
   if (session.poolStatus === 'closed') throw new HttpError(409, '本场已闭池，停止入场');
+  // 上一场机构包场未完成清场/水质复测，不得开放下一场（含居民核验放行）
+  {
+    const today = session.date;
+    const tStart = new Date(`${session.date}T${session.start}:00`).getTime();
+    const blocking = (db.rentalCases ?? []).find((rc) => {
+      if (rc.sessionId === session.id) return false;
+      if (rc.status !== 'active' && rc.status !== 'suspended') return false;
+      if (rc.closeout?.reopenedAt) return false;
+      const ps = db.sessions.find((x) => x.id === rc.sessionId);
+      if (!ps || ps.date !== today) return false;
+      return new Date(`${ps.date}T${ps.start}:00`).getTime() <= tStart;
+    });
+    if (blocking)
+      throw new HttpError(409, `上一场机构包场 ${blocking.code}（${blocking.orgName}）尚未完成清场/清柜/水质复测，未复测或未清场不得开放下一场`);
+  }
   if (session.poolStatus === 'restricted') throw new HttpError(409, `本场限流中：${session.statusReason || '水质/天气异常待复测'}，暂不放行`);
   if (session.poolStatus === 'partial' && (session.affectedZoneIds ?? []).includes(b.zoneId))
     throw new HttpError(409, `该泳区因${session.statusReason || '水质异常'}暂停开放，请为泳客改约其他泳区或办理退款`);
@@ -1035,6 +1058,32 @@ export function liveBoard(db: DB, sessionId?: string): LiveBoard {
       post: d.post as GuardPost, postLabel: GUARD_POST_LABEL[d.post],
       guardName: db.users.find((u) => u.id === d.guardUserId)?.name ?? '未知', startedAt: d.start,
     }));
+  // 本场生效中的机构包场（救生按人数站位/前台核验用）
+  const activeRentals = (db.rentalCases ?? [])
+    .filter((rc) => rc.sessionId === session.id && ['approved', 'active', 'suspended'].includes(rc.status))
+    .map((rc) => ({
+      rentalCaseId: rc.id, code: rc.code, orgName: rc.orgName, zoneId: rc.zoneId,
+      lanes: rc.coordination?.approvedLanes ?? rc.lanes,
+      approvedCapacity: rc.coordination?.approvedCapacity ?? rc.partySize,
+      actualCount: rc.actualCount ?? 0,
+      status: rc.status,
+      extraLifeguards: rc.coordination?.extraLifeguards ?? 0,
+    }));
+  // 未清场/未复测不得开放下一场：同日更早场次仍有包场未收尾则拦截
+  const targetStart = new Date(`${session.date}T${session.start}:00`).getTime();
+  const blocking = (db.rentalCases ?? []).find((rc) => {
+    if (rc.status !== 'active' && rc.status !== 'suspended') return false;
+    if (rc.closeout?.reopenedAt) return false;
+    if (rc.sessionId === session.id) return false;
+    const ps = db.sessions.find((x) => x.id === rc.sessionId);
+    if (!ps || ps.date !== session.date) return false;
+    return new Date(`${ps.date}T${ps.start}:00`).getTime() <= targetStart;
+  });
+  const priorRentalNotCleared = blocking ? {
+    code: blocking.code,
+    sessionLabel: db.sessions.find((x) => x.id === blocking.sessionId)?.label ?? blocking.sessionId,
+    orgName: blocking.orgName,
+  } : undefined;
   return {
     session,
     zones,
@@ -1046,6 +1095,8 @@ export function liveBoard(db: DB, sessionId?: string): LiveBoard {
     equipment: db.equipment,
     focusLanes: session.guardFocusLanes ?? [],
     suspendedLanes: session.suspendedLanes ?? [],
+    activeRentals,
+    priorRentalNotCleared,
   };
 }
 

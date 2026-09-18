@@ -12,13 +12,14 @@ export const BOOKING_STATUS_LABEL: Record<BookingStatus, string> = {
   refunded: '已退费',
   compensated: '退费+补偿',
   postponed: '已顺延',
+  rebooked: '已改约',
 };
 
 export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'purple' | 'gray';
 
 export const BOOKING_STATUS_BADGE: Record<BookingStatus, Tone> = {
   booked: 'info', checked_in: 'ok', no_show: 'gray', cancelled: 'gray',
-  refunded: 'purple', compensated: 'purple', postponed: 'warn',
+  refunded: 'purple', compensated: 'purple', postponed: 'warn', rebooked: 'purple',
 };
 
 export const POOL_STATUS_LABEL: Record<PoolStatus, string> = {

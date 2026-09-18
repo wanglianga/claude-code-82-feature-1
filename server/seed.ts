@@ -1,8 +1,9 @@
 import type {
   DB, User, Zone, Session, Booking, WaterReading, Equipment, GuardDuty,
   PatrolIssue, WorkTask, Complaint, Notification, WalletTxn, CoachingLesson,
-  CrampRescue, GuardTrainingItem,
+  CrampRescue, GuardTrainingItem, RentalCase, OrgBillItem, OrgCreditRecord,
 } from '../shared/types.js';
+import { rentalFeeOf } from '../shared/logic.js';
 
 // 以“当前时刻”为锚生成演示数据：上午公众场正在进行、在池有人、水质读数与上哨时间都在过去，
 // 保证任何时间启动容器，业务链路（含闭池后“复测必须晚于闭池时间”）都自洽。
@@ -68,18 +69,24 @@ export function seed(): DB {
     {
       id: 's-pm', label: '下午公众场', date, start: hhmm(150), end: hhmm(270),
       poolStatus: 'normal', maxCapacity: 154, locks: [
-        { id: 'lock-2', zoneId: 'family', reason: 'institution_rental', title: '蓝鲸游泳培训机构·少儿包场（洽谈中）', contactName: '赵晓', contactPhone: '13800000005', capacity: 30, isCommercial: true },
+        // 蓝鲸培训少儿包场申请（待资质核验与居民改约协调）；占位锁区在协调确认前不实际锁死居民名额
+        { id: 'lock-2', zoneId: 'family', reason: 'institution_rental', title: '蓝鲸游泳培训机构·少儿包场（待核验协调）', contactName: '赵晓', contactPhone: '13800000005', capacity: 20, isCommercial: true, bookingId: 'bk-pm-rental', rentalCaseId: 'rc-seed-pm', showerSeats: 14, lockerCount: 20, independentEntry: true },
       ],
       guardFocusLanes: [
         { zoneId: 'shallow', lane: 2, version: 1, by: '刘救生', history: [],
           reason: '早场老人晨泳 2 号道抽筋救援 CR-2059 第1版站位策略：持续重点关注',
           rescueId: 'cr-seed-1', fromSessionId: 's-am', at: rel(-85) },
       ],
+      rentalCaseIds: ['rc-seed-pm'],
       closureIds: [], createdAt: rel(-60),
     },
     {
       id: 's-eve', label: '晚场·暑期儿童高峰', date, start: hhmm(360), end: hhmm(480),
-      poolStatus: 'normal', maxCapacity: 154, locks: [], closureIds: [], createdAt: rel(-30),
+      poolStatus: 'normal', maxCapacity: 154, locks: [
+        // 已完成协调、机构已确认的训练区包场（等待当天前台/救生/保洁/维修核验），不占用 family
+        { id: 'lock-eve-1', zoneId: 'training', reason: 'institution_rental', title: '蓝鲸游泳培训·自由泳包场（已确认）', contactName: '赵晓', contactPhone: '13800000005', capacity: 16, isCommercial: true, bookingId: 'bk-eve-rental', rentalCaseId: 'rc-seed-eve', showerSeats: 10, lockerCount: 16, independentEntry: false },
+      ],
+      rentalCaseIds: ['rc-seed-eve'], closureIds: [], createdAt: rel(-30),
     },
   ];
 
@@ -121,6 +128,21 @@ export function seed(): DB {
       withChildren: true, childCount: 1, childCompanion: '李娟（母亲）', childCompanionPhone: '13800000002',
       swimLevel: 'beginner', partySize: 2, childrenInParty: 1, status: 'booked',
       paidAmount: 40, paymentMethod: 'wallet', createdAt: rel(-35),
+    },
+    // ---- 机构包场预约（进入包场冲突协调档案；申请阶段费用暂为 0，确认后进机构账单） ----
+    {
+      id: 'bk-pm-rental', code: 'B-2070', userId: 'u-lan', kind: 'institution_rental', sessionId: 's-pm', zoneId: 'family',
+      periodLabel: `${sessions[2].start}-${sessions[2].end}`, age: 0, healthPledge: true,
+      withChildren: true, childCount: 0, swimLevel: 'none', partySize: 20, childrenInParty: 12,
+      contactName: '赵晓', contactPhone: '13800000005', orgName: '蓝鲸游泳培训',
+      status: 'booked', paidAmount: 0, paymentMethod: 'cash', createdAt: rel(-50), rentalCaseId: 'rc-seed-pm',
+    },
+    {
+      id: 'bk-eve-rental', code: 'B-2071', userId: 'u-lan', kind: 'institution_rental', sessionId: 's-eve', zoneId: 'training',
+      periodLabel: `${sessions[3].start}-${sessions[3].end}`, age: 0, healthPledge: true,
+      withChildren: false, childCount: 0, swimLevel: 'none', partySize: 16,
+      contactName: '赵晓', contactPhone: '13800000005', orgName: '蓝鲸游泳培训',
+      status: 'booked', paidAmount: 0, paymentMethod: 'cash', createdAt: rel(-40), rentalCaseId: 'rc-seed-eve',
     },
   ];
 
@@ -219,10 +241,103 @@ export function seed(): DB {
 
   sessions[0].crampRescueCount = 1;
 
+  // ---- 机构包场冲突协调档案 ----
+  // 下午场：蓝鲸少儿包场申请，资质已核验通过，正与居民 B-2066（亲子）协商改约（平台不覆盖居民预约）
+  const rcPm: RentalCase = {
+    id: 'rc-seed-pm', code: 'RC-3001', sessionId: 's-pm', orgUserId: 'u-lan', orgName: '蓝鲸游泳培训',
+    contactName: '赵晓', contactPhone: '13800000005', bookingId: 'bk-pm-rental', lockId: 'lock-2',
+    status: 'coordinating', zoneId: 'family', partySize: 20, adultCount: 16, childCount: 4, containsChildren: true,
+    purpose: '暑期少儿自由泳提高班', appliedAt: rel(-50), appliedBy: '蓝鲸游泳培训',
+    qualification: {
+      institutionCert: true, institutionCertNote: '办学许可证有效期内',
+      coachNames: '马教练、林教练', coachCert: true, coachCertNote: '社会体育指导员（游泳）证齐全',
+      lifeguardCount: 2, lifeguardNames: '刘救生、周救生', lifeguardCert: true, lifeguardCertNote: '救生员证+ CPR 证书齐全',
+      insurancePolicyNo: 'PUB-2026-08812', insuranceCoverage: 1000000, insuranceVerified: true,
+      insuranceExpiry: '2026-12-31', partySize: 20, adultCount: 16, childCount: 4,
+      ageStructure: '成人教练/陪同 16 人；8-12 岁学员 4 人', containsChildren: true,
+      companions: [
+        { childName: '小林', childAge: 8, companion: '林教练', companionPhone: '13900000011', relation: '主教练' },
+        { childName: '小陈', childAge: 9, companion: '陈女士', companionPhone: '13900000012', relation: '母亲' },
+        { childName: '小周', childAge: 10, companion: '周先生', companionPhone: '13900000013', relation: '父亲' },
+        { childName: '小吴', childAge: 12, companion: '马教练', companionPhone: '13900000014', relation: '主教练' },
+      ],
+      companionRulePassed: true, independentEntry: true, separateChanging: true, showerSeats: 14, lockerCount: 20,
+      verifiedAt: rel(-45), verifiedBy: '孙运营',
+    },
+    residentConflicts: [
+      {
+        bookingId: bookings[5].id, bookingCode: 'B-2066', userId: 'u-li',
+        tags: ['parent_child', 'stored_member'], zoneId: 'family',
+        partySize: 2, childCount: 1, compVouchers: 0, refundAmount: 0, status: 'identified',
+      },
+    ],
+    fee: { laneFee: 0, periodFee: 0, lifeguardOvertimeFee: 0, lockerFee: 0, showerFee: 0, deposit: 0, total: 0 },
+    violations: [],
+    timeline: [
+      { at: rel(-50), by: '蓝鲸游泳培训', byRole: 'resident', action: '机构申请亲子儿童区包场 20 人（含儿童 4），申请走独立出入口与独立更衣' },
+      { at: rel(-45), by: '孙运营', byRole: 'ops', action: '资质/教练/救生/保险/儿童陪同逐项核验通过，进入居民改约协调' },
+    ],
+  };
+
+  const eveFee = rentalFeeOf({
+    laneCount: 2, hours: 2, partySize: 16, welfarePeriod: false,
+    extraLifeguards: 1, lifeguardHours: 2, lockerCount: 16, showerSeats: 10, depositMultiplier: 1.5,
+  });
+  // 晚场：已协调、机构已确认的训练区包场（2 条泳道/16 人/增派 1 名救生），等待当天六岗核验
+  const rcEve: RentalCase = {
+    id: 'rc-seed-eve', code: 'RC-3002', sessionId: 's-eve', orgUserId: 'u-lan', orgName: '蓝鲸游泳培训',
+    contactName: '赵晓', contactPhone: '13800000005', bookingId: 'bk-eve-rental', lockId: 'lock-eve-1',
+    status: 'approved', zoneId: 'training', lanes: [5, 6], partySize: 16, adultCount: 16, childCount: 0,
+    containsChildren: false, purpose: '成人自由泳长训班', appliedAt: rel(-40), appliedBy: '蓝鲸游泳培训',
+    qualification: {
+      institutionCert: true, institutionCertNote: '办学许可证有效期内',
+      coachNames: '马教练', coachCert: true,
+      lifeguardCount: 2, lifeguardNames: '刘救生、周救生', lifeguardCert: true,
+      insurancePolicyNo: 'PUB-2026-08812', insuranceCoverage: 1000000, insuranceVerified: true, insuranceExpiry: '2026-12-31',
+      partySize: 16, adultCount: 16, childCount: 0, ageStructure: '成人长训学员 16 人', containsChildren: false,
+      companions: [], companionRulePassed: true, independentEntry: false, separateChanging: false,
+      showerSeats: 10, lockerCount: 16, verifiedAt: rel(-38), verifiedBy: '孙运营',
+    },
+    coordination: {
+      approvedLanes: [5, 6], approvedCapacity: 16, extraLifeguards: 1,
+      residentCompVouchers: 1, welfareRefund: true,
+      note: '拆分训练区 5-6 号道给机构，其余泳道居民正常使用',
+      decidedAt: rel(-38), decidedBy: '孙运营',
+    },
+    residentConflicts: [],
+    fee: eveFee, billId: 'bill-seed-eve',
+    violations: [],
+    orgConfirmedAt: rel(-36), orgConfirmNote: '机构确认按 5-6 号道、16 人执行',
+    timeline: [
+      { at: rel(-40), by: '蓝鲸游泳培训', byRole: 'resident', action: '机构申请晚场训练区包场 16 人' },
+      { at: rel(-38), by: '孙运营', byRole: 'ops', action: '资质核验通过；无居民预约冲突，协调拆分 5-6 号道、增派 1 名救生' },
+      { at: rel(-36), by: '蓝鲸游泳培训', byRole: 'resident', action: `机构确认方案，费用五项拆分合计 ¥${eveFee.total}（含押金 ¥${eveFee.deposit}）进入机构账单` },
+    ],
+  };
+
+  const billEve: OrgBillItem = {
+    id: 'bill-seed-eve', orgUserId: 'u-lan', orgName: '蓝鲸游泳培训',
+    rentalCaseId: 'rc-seed-eve', rentalCode: 'RC-3002', sessionId: 's-eve',
+    sessionLabel: '晚场·暑期儿童高峰', breakdown: eveFee, paidAmount: 0,
+    depositHeld: eveFee.deposit, status: 'unsettled', createdAt: rel(-36),
+    note: '机构确认方案后落账；当天结束结算，押金按违规情况退回或抵扣',
+  };
+
+  // 机构信用历史：上月一次超时、一次投诉（已整改），信用 88 分 → 押金上浮 1.5 倍，但未被限制包场
+  const orgCreditRecords: OrgCreditRecord[] = [
+    { id: 'ocr-seed-1', orgUserId: 'u-lan', orgName: '蓝鲸游泳培训', rentalCaseId: 'rc-old-1', rentalCode: 'RC-2901',
+      at: rel(-4320 * 30), type: 'overtime', description: '上月晚场包场超时 18 分钟清场，影响下一场居民入场',
+      scoreDelta: -6, recordedBy: '孙运营' },
+    { id: 'ocr-seed-2', orgUserId: 'u-lan', orgName: '蓝鲸游泳培训', rentalCaseId: 'rc-old-1', rentalCode: 'RC-2901',
+      at: rel(-4320 * 29), type: 'complaint', description: '居民投诉包场学员占用公共淋浴位时间过长，机构已增派带队老师疏导',
+      scoreDelta: -6, recordedBy: '孙运营' },
+  ];
+
   return {
     users, zones, sessions, bookings, waterReadings, equipment, guardDuties,
     patrolIssues: [...patrolIssues], incidents: [], workTasks, complaints, notifications, walletTxns,
     lessons, closureRecords: [], crampRescues, guardTraining,
+    rentalCases: [rcEve, rcPm], orgBills: [billEve], orgCreditRecords,
     counters: { seq }, seededAt: new Date().toISOString(),
   };
 }

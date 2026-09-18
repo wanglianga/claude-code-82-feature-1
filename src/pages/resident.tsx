@@ -12,6 +12,7 @@ import {
 import { priceOf } from '../../shared/logic.js';
 import { visibleNotifications } from '../components/notifications.js';
 import { IncidentList } from '../components/incident.js';
+import { ApplyRental, MyRentals, ResidentRebookOffers } from '../components/rental-inst.js';
 
 type Props = { user: User; state: AppState; tab: string };
 
@@ -378,9 +379,32 @@ function NoticeComplaint({ user, state }: Props) {
   );
 }
 
+function RentalTab({ user, state }: Props) {
+  if (user.memberTier === 'institution') {
+    return (
+      <div>
+        <ApplyRental user={user} state={state} />
+        <div className="section-gap"><MyRentals user={user} state={state} /></div>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <ResidentRebookOffers user={user} state={state} />
+      <Card title="居民公益时段保障说明" className={state.rentalCases.some((r) => r.residentConflicts.some((c) => c.userId === user.id)) ? 'section-gap' : ''}>
+        <div className="small">
+          培训机构或商业团体包场时，平台会先列出与老人晨泳、亲子时段、居民公益时段、教练课、会员储值用户的冲突范围，逐人协商改约；
+          <b>平台不会直接覆盖居民预约</b>。您不同意改约时，系统保留您的原预约并压缩包场范围；公益时段被压缩的，退费或补偿券会同步到您的账户与通知，不只内部登记。
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 export function ResidentPage(props: Props) {
   if (props.tab === 'book') return <BookingForm user={props.user} state={props.state} />;
   if (props.tab === 'mine') return MyBookings(props);
   if (props.tab === 'lesson') return Lessons(props);
+  if (props.tab === 'rental') return <RentalTab {...props} />;
   return NoticeComplaint(props);
 }

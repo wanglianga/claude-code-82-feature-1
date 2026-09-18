@@ -12,6 +12,7 @@ import {
 import { SessionPicker, LifecycleSteps, PoolStatusBanner, Stat } from '../components/common.js';
 import { IncidentList, IncidentCreateForm } from '../components/incident.js';
 import { RescueCard, TrainingRow, rescueStatus, zoneLabel } from '../components/cramp.js';
+import { OpsRentalTab } from '../components/rental-ops.js';
 import {
   CRAMP_PART_LABEL, RESCUE_METHOD_LABEL, RESCUE_CLOSURE_LABEL,
 } from '../../shared/types.js';
@@ -66,6 +67,14 @@ function buildTimeline(state: AppState, sessionId: string): TL[] {
   }
   for (const t of state.workTasks.filter((t) => t.sessionId === sessionId && t.doneAt))
     tl.push({ at: t.doneAt!, title: `工单完成：${t.title} — ${t.result}`, tone: 'ok', who: t.assigneeName ?? '' });
+  // 机构包场冲突协调、居民改约、补偿、机构确认、当天核验、违规、清场恢复全部进入场次记录
+  for (const rc of state.rentalCases.filter((r) => r.sessionId === sessionId)) {
+    rc.timeline.forEach((a) => tl.push({
+      at: a.at, title: `包场 ${rc.code}（${rc.orgName}）：${a.action}`,
+      tone: a.action.includes('暂停') || a.action.includes('违规') || a.action.includes('驳回') ? 'danger'
+        : a.action.includes('恢复') || a.action.includes('同意') ? 'ok' : '', who: a.by,
+    }));
+  }
   // 每一轮闭池都来自不可变档案：原因、退费补偿、清场、复测、通知结果各自固化，互不覆盖
   const closureRecords = state.closureRecords
     .filter((r) => r.sessionId === sessionId)
@@ -796,7 +805,7 @@ function Complaints({ state }: Props) {
 
 export function OpsPage(props: Props) {
   if (props.tab === 'rescue') return <RescueReviewTab {...props} />;
-  if (props.tab === 'conflict') return <Conflicts {...props} />;
+  if (props.tab === 'conflict') return <OpsRentalTab state={props.state} user={props.user} />;
   if (props.tab === 'close') return <CloseReopen {...props} />;
   if (props.tab === 'incident') return <IncidentTab {...props} />;
   if (props.tab === 'tasks') return <Dispatch {...props} />;

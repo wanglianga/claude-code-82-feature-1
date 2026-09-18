@@ -1,9 +1,10 @@
 import type {
   DB, User, Role, Session, Booking, Notification, Incident, WorkTask, PatrolIssue,
   WaterReading, GuardDuty, Complaint, CoachingLesson, LiveBoard, ZoneLock,
-  StateView, PatronCard,
+  StateView, PatronCard, RentalCase, RentalQualification, OrgBillItem,
 } from '../shared/types.js';
 import { liveBoard, conflictSummary, sessionDetail } from './domain.js';
+import { orgCreditProfile } from './rental.js';
 
 export type { StateView, PatronCard };
 
@@ -100,8 +101,7 @@ function safeBoard(b: LiveBoard, viewer: User): LiveBoard {
 }
 
 /** 闭池档案裁剪：运营全量；居民仅见本人受影响条目；其他员工（含前台）只见原因/状态/计数，不见逐人退款 */
-function sanitizeClosure(db: DB, r: DB['closureRecords'][number], viewer: User) {
-  const role = viewer.role;
+function sanitizeClosure(db: DB, r: DB['closureRecords'][number], viewer: User) {  const role = viewer.role;
   if (role === 'ops') return r;
   if (role === 'resident') {
     const mine = r.affected.filter((a) => a.userId === viewer.id);
@@ -115,6 +115,77 @@ function sanitizeClosure(db: DB, r: DB['closureRecords'][number], viewer: User) 
     refundTotal: r.refundCount, // 不含逐人金额，保留笔数
     taskIds: myTaskIds,
   };
+}
+
+/** 包场档案中的资质材料：仅运营/前台可见完整信息；救生/保洁/维修不见保险单号等机构商业信息 */
+function safeQualification(q: RentalQualification, viewer: User): RentalQualification {
+  if (viewer.role === 'ops' || viewer.role === 'frontdesk') return q;
+  return {
+    ...q,
+    // 救生只需知道救生配置/人数与儿童数；保洁维修只需知道更衣淋浴/储物柜需求
+    insurancePolicyNo: '', insuranceCoverage: 0,
+    coachNames: viewer.role === 'lifeguard' ? q.coachNames : '',
+    institutionCertNote: undefined, coachCertNote: undefined,
+    lifeguardCertNote: undefined,
+    companions: viewer.role === 'lifeguard' ? q.companions : [],
+  };
+}
+
+/**
+ * 包场协调档案按角色裁剪：
+ *  - ops/frontdesk/lifeguard/cleaner/maintenance：见与本岗相关的包场（救生站位/前台核验/保洁维修保障）；
+ *  - 机构账号（memberTier=institution）：仅见本机构申请（账单/信用/协调进展）；
+ *  - 普通居民：仅见含本人改约协商的脱敏卡片（只见本人那条 residentConflicts，不见机构联系人、其他居民、费用拆分）。
+ */
+function sanitizeRentalCase(db: DB, rc: RentalCase, viewer: User): RentalCase | null {
+  const role = viewer.role;
+  if (role === 'ops') return rc;
+  if (viewer.id === rc.orgUserId) return rc; // 申请机构看本机构全量（自己的账单/资质）
+  if (role === 'frontdesk' || role === 'lifeguard' || role === 'cleaner' || role === 'maintenance') {
+    // 员工只见进入当天阶段（已确认及之后）的包场；协商中的属于运营职责
+    if (rc.status === 'pending' || rc.status === 'verifying' || rc.status === 'rejected' || rc.status === 'cancelled') {
+      if (role !== 'frontdesk') return null;
+    }
+    const qualification = safeQualification(rc.qualification, viewer);
+    return {
+      ...rc,
+      // 前台负责机构到场对接，保留联系电话；其他岗位不留机构联系人电话
+      contactPhone: role === 'frontdesk' ? rc.contactPhone : '',
+      qualification,
+      fee: { ...rc.fee, laneFee: 0, periodFee: 0, lifeguardOvertimeFee: 0, lockerFee: 0, showerFee: 0, deposit: 0, total: 0 },
+      residentConflicts: role === 'frontdesk'
+        ? rc.residentConflicts
+        : rc.residentConflicts.map((c) => ({ ...c, userId: '', compVouchers: 0, refundAmount: 0, walletTxnId: undefined, notificationId: undefined })),
+    };
+  }
+  // 普通居民：运营已发起改约提议后才可见脱敏卡片（identified=尚未协商，不对居民展示）
+  const mine = rc.residentConflicts.filter((c) => c.userId === viewer.id && c.status !== 'identified');
+  if (mine.length === 0) return null;
+  return {
+    ...rc,
+    contactName: '', contactPhone: '', orgUserId: '',
+    qualification: {
+      ...rc.qualification, insurancePolicyNo: '', insuranceCoverage: 0, coachNames: '', lifeguardNames: '',
+      institutionCertNote: undefined, coachCertNote: undefined, lifeguardCertNote: undefined, companions: [],
+    },
+    fee: { laneFee: 0, periodFee: 0, lifeguardOvertimeFee: 0, lockerFee: 0, showerFee: 0, deposit: 0, total: 0 },
+    residentConflicts: mine.map((c) => ({ ...c, walletTxnId: undefined })),
+    violations: [], dayChecklist: undefined,
+    billId: undefined,
+  };
+}
+
+function visibleRentalCases(db: DB, viewer: User): RentalCase[] {
+  return (db.rentalCases ?? []).flatMap((rc) => {
+    const v = sanitizeRentalCase(db, rc, viewer);
+    return v ? [v] : [];
+  });
+}
+
+function visibleOrgBills(db: DB, viewer: User): OrgBillItem[] {
+  if (viewer.role === 'ops') return db.orgBills ?? [];
+  if (viewer.memberTier === 'institution') return (db.orgBills ?? []).filter((b) => b.orgUserId === viewer.id);
+  return [];
 }
 
 export function buildStateView(db: DB, viewer: User): StateView {
@@ -214,12 +285,29 @@ export function buildStateView(db: DB, viewer: User): StateView {
       ? db.guardTraining.filter((t) => t.targetGuardNames.length === 0 || t.targetGuardNames.includes(viewer.name))
       : [];
 
+  // ---- 机构包场协调档案 / 账单 / 信用：按角色裁剪 ----
+  const rentalCases = visibleRentalCases(db, viewer);
+  const orgBills = visibleOrgBills(db, viewer);
+  const orgCredits = isOps
+    ? allOrgCreditProfilesLocal(db)
+    : viewer.memberTier === 'institution'
+      ? [orgCreditProfile(db, viewer.id)]
+      : [];
+
   return {
     viewerRole: role,
     users, zones: db.zones, sessions, bookings, waterReadings, equipment,
     guardDuties, patrolIssues, incidents, workTasks, complaints, notifications,
-    walletTxns, lessons, closureRecords, crampRescues, guardTraining, boards, conflicts,
+    walletTxns, lessons, closureRecords, crampRescues, guardTraining,
+    rentalCases, orgBills, orgCredits, boards, conflicts,
   };
+}
+
+function allOrgCreditProfilesLocal(db: DB) {
+  const ids = new Set<string>();
+  (db.orgCreditRecords ?? []).forEach((r) => ids.add(r.orgUserId));
+  (db.rentalCases ?? []).forEach((r) => ids.add(r.orgUserId));
+  return [...ids].map((id) => orgCreditProfile(db, id));
 }
 
 /** GET /api/sessions/:id 同样按角色裁剪（前端虽走 /state，接口本身也不得泄露） */

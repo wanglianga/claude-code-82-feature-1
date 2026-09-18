@@ -10,6 +10,7 @@ import {
 import { SessionPicker, PoolStatusBanner } from '../components/common.js';
 import { IncidentList, IncidentCreateForm } from '../components/incident.js';
 import { RescueWorkbench, FocusLaneAlerts, zoneLabel } from '../components/cramp.js';
+import { RentalFrontline } from '../components/rental-frontline.js';
 import { WATER_STD } from '../../shared/logic.js';
 
 type Props = { user: User; state: AppState; tab: string; sessionId?: string };
@@ -26,6 +27,14 @@ function Board({ state, sessionId, setSessionId }: { state: AppState; sessionId:
       <SessionPicker sessions={state.sessions} value={sessionId} onChange={setSessionId} />
       <PoolStatusBanner status={s.poolStatus} reason={s.statusReason} requireRetest={s.requireWaterRetest} closedAt={s.closedAt} reopenedAt={s.reopenedAt} />
       <FocusLaneAlerts state={state} sessionId={sessionId} />
+      {board.priorRentalNotCleared && (
+        <div className="alert danger">⛔ 上一场机构包场 {board.priorRentalNotCleared.code}（{board.priorRentalNotCleared.orgName}）尚未完成清场/水质复测，<b>不得开放本场</b>，请先完成清场恢复门禁。</div>
+      )}
+      {board.activeRentals.length > 0 && (
+        <div className="alert warn">
+          🏢 本场机构包场：{board.activeRentals.map((r) => `${r.code} ${r.orgName}（核准 ${r.approvedCapacity} 人${r.actualCount ? `/实际 ${r.actualCount} 人` : ''}，增派救生 ${r.extraLifeguards} 名，${r.status === 'active' ? '进行中' : r.status === 'suspended' ? '已暂停' : '待核验'}）`).join('；')}。请在「包场站位/巡查」按人数重新站位。
+        </div>
+      )}
       {board.suspendedLanes.length > 0 && (
         <div className="alert danger">⛔ 泳道临停中：
           {board.suspendedLanes.map((l) => `${zoneLabel(state, l.zoneId)} ${l.lane}号道（${l.reason}）`).join('；')}
@@ -296,6 +305,7 @@ export function LifeguardPage(props: Props) {
   if (props.tab === 'patrol') return <Patrol {...props} sessionId={sessionId} />;
   if (props.tab === 'guard') return <GuardDuty {...props} sessionId={sessionId} />;
   if (props.tab === 'rescue') return <RescueWorkbench state={props.state} user={props.user} sessionId={sessionId} setSessionId={setSessionId} />;
+  if (props.tab === 'rental') return <RentalFrontline user={props.user} state={props.state} role="lifeguard" />;
   if (props.tab === 'incident') return (
     <div className="grid cols-2">
       <IncidentCreateForm sessions={props.state.sessions} defaultSessionId={sessionId} />

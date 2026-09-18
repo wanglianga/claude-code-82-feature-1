@@ -94,10 +94,12 @@ const NAV: Record<Role, { key: string; label: string; icon: string }[]> = {
     { key: 'book', label: '预约入场', icon: '🎟️' },
     { key: 'mine', label: '我的预约·钱包', icon: '👛' },
     { key: 'lesson', label: '教练课', icon: '🏅' },
+    { key: 'rental', label: '机构包场', icon: '🏢' },
     { key: 'notice', label: '通告与投诉', icon: '📣' },
   ],
   frontdesk: [
     { key: 'checkin', label: '入场核验台', icon: '✅' },
+    { key: 'rental', label: '包场当天核验', icon: '🏢' },
     { key: 'locker', label: '储物柜与在场', icon: '🗄️' },
     { key: 'incident', label: '事件协同', icon: '🚨' },
     { key: 'notice', label: '现场通告', icon: '📣' },
@@ -105,6 +107,7 @@ const NAV: Record<Role, { key: string; label: string; icon: string }[]> = {
   lifeguard: [
     { key: 'board', label: '实时看板', icon: '🌊' },
     { key: 'rescue', label: '抽筋救援', icon: '🆘' },
+    { key: 'rental', label: '包场站位/巡查', icon: '🏢' },
     { key: 'water', label: '水质检测', icon: '🧪' },
     { key: 'patrol', label: '救生巡查', icon: '🔭' },
     { key: 'guard', label: '站位与换岗', icon: '🛟' },
@@ -112,18 +115,20 @@ const NAV: Record<Role, { key: string; label: string; icon: string }[]> = {
   ],
   cleaner: [
     { key: 'tasks', label: '我的工单', icon: '🧹' },
+    { key: 'rental', label: '包场保洁保障', icon: '🏢' },
     { key: 'patrol', label: '巡查上报', icon: '🔭' },
     { key: 'incident', label: '事件协同', icon: '🚨' },
   ],
   maintenance: [
     { key: 'tasks', label: '维修/消毒工单', icon: '🔧' },
+    { key: 'rental', label: '包场设备/复测', icon: '🏢' },
     { key: 'equip', label: '设备与水质复测', icon: '⚙️' },
     { key: 'incident', label: '事件协同', icon: '🚨' },
   ],
   ops: [
     { key: 'command', label: '场次指挥台', icon: '🎛️' },
     { key: 'rescue', label: '救援复盘培训', icon: '🆘' },
-    { key: 'conflict', label: '商业/公益冲突', icon: '⚖️' },
+    { key: 'conflict', label: '包场冲突协调', icon: '⚖️' },
     { key: 'close', label: '闭池与恢复', icon: '🌧️' },
     { key: 'incident', label: '事件指挥', icon: '🚨' },
     { key: 'tasks', label: '工单派发', icon: '📋' },
